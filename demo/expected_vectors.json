@@ -105,6 +105,23 @@
       "envelopeSha256": "2da9180427066eb31847afdf00800688d1661438bbf47943aad15bf89a941ceb",
       "signatureB64": "kfevuUQk0ud+83PEqFBWUYmoM3hH3//dYBubk1ZGU7s48RRROirJyKCir35VTtQDVB++79NdKt+HrCY8pJGyBA==",
       "acceptedKeyId": "e7c1da4c4d6b8bc9e1d250795bccf2af6b231daeb09529b18ea6abbcd318dcdd"
+    },
+    {
+      "vector": "08-target-plus-valid-sbom.attestation.json",
+      "file": "08-target-plus-valid-sbom.attestation.json",
+      "note": "同一声明含目标 tar.gz 与摘要正确的 sbom.json：只比较目标 subject，必须 allow",
+      "artifactPath": "demo/artifacts/payments-api-1.4.2.tar.gz",
+      "actualArtifactSha256": "21d31ef8bc0c5bf9828778d6af058dd9b34e03e9389c753de56fc772baa4a0cf",
+      "claimedSha256": "21d31ef8bc0c5bf9828778d6af058dd9b34e03e9389c753de56fc772baa4a0cf",
+      "signatureValid": true,
+      "issuerTrusted": true,
+      "policyAllowed": true,
+      "digestMatch": true,
+      "decisionCurrent": "allow",
+      "decisionExpired": "deny",
+      "envelopeSha256": "bc2d6788cfa56fbae6ed5aee476ca27a761d6a70409145061589780b16d74270",
+      "signatureB64": "cox1Pdr8/e9DxjpU6bQRFIl1sEnFnrsFp9vVis8Oqfw8PlWcxh8NF7OCTtk61ILKkLLDwPJ+Pg++XHh0f4uHCw==",
+      "acceptedKeyId": "e7c1da4c4d6b8bc9e1d250795bccf2af6b231daeb09529b18ea6abbcd318dcdd"
     }
   ],
   "expiredPolicyVersion": "2025.06",

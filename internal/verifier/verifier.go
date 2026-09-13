@@ -316,8 +316,8 @@ func (v *Verifier) verifyOne(
 		pr.Signature = attestation.SignatureCheck{Valid: false, Reason: err.Error()}
 		pr.ParseError = err.Error()
 		pr.Policy = deniedPolicy(v.engine, []string{"DSSE 信封无法解析"})
-		pr.Digest = artifact.DigestResult{ArtifactPath: artifactPath, HardReject: true,
-			Reason: "信封无法解析，无法取得声明摘要"}
+		pr.Digest = artifact.DigestResult{ArtifactPath: artifactPath, TargetName: artifactName,
+			HardReject: true, Reason: "信封无法解析，无法取得声明摘要"}
 		return pr
 	}
 
@@ -325,8 +325,10 @@ func (v *Verifier) verifyOne(
 	sigCheck, body, st := attestation.VerifyEnvelope(env, known)
 	pr.Signature = sigCheck
 
-	// (4) 摘要闸门：基于实际字节。无法解析 statement 时记录硬失败。
-	pr.Digest = artifact.VerifySubjectDigest(artifactPath, actualSHA, st)
+	// (4) 摘要闸门：只比对与目标产物同名的 subject，基于实际字节重算。
+	// 无法解析 statement 时记录硬失败；其他名称的 subject（如 sbom.json）
+	// 不参与本次目标产物比对。
+	pr.Digest = artifact.VerifySubjectDigest(artifactPath, artifactName, actualSHA, st)
 
 	// 没有合法 statement 时，信任与策略无法继续，给出独立失败结论。
 	if st == nil {

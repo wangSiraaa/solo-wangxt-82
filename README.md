@@ -13,7 +13,7 @@
 | **签名有效** `signature.valid` | Go + `go-securesystemslib` DSSE + `crypto/ed25519` | DSSE PAE 重放保护、Ed25519 密码学验签；KeyID 由服务端按公钥 DER(SPKI) 的 SHA-256 自行计算，**不信信封自报 keyid** |
 | **签发者可信** `issuer.trusted` | 显式信任根 JSON | 验签通过的公钥指纹必须在信任根中，且其绑定的 `issuer` 与 provenance 自报 `runDetails.builder.id` 完全一致 |
 | **声明符合策略** `policy.allowed` | **OPA**（Rego，默认拒绝） | 谓词类型、允许的构建者白名单、允许的源码仓库精确匹配、commit 固定、策略生效窗口（**过期即拒绝**） |
-| **摘要与实际字节一致** `digest.matched` | Go `crypto/sha256` 流式重算 | 对磁盘上的真实产物重算摘要并与 statement subject 逐一比对；不一致 `hardReject=true`，**直接拒绝，不只检查 JSON 字段是否齐全** |
+| **摘要与实际字节一致** `digest.matched` | Go `crypto/sha256` 流式重算 | 只对 statement 中**名称等于请求 `artifactName` 的 subject** 重算并逐一比对（如同一份声明还附带 `sbom.json` 等其他 subject，它们不参与本次目标产物比对，仅在 `digest.ignoredSubjects` 留名）；目标 subject 缺失或摘要不一致都 `hardReject=true`，**直接拒绝，不只检查 JSON 字段是否齐全** |
 
 典型分离场景：
 
@@ -116,7 +116,8 @@ go run ./cmd/verifyctl -name payments-api-1.4.2.tar.gz \
 | `05-wrong-source.attestation.json` | 源码不在允许列表（签名、信任仍成立） |
 | `06-digest-field-mismatch.attestation.json` | JSON 字段齐全但摘要值伪造：必须重算并拒绝 |
 | `07-conflicting-commit.attestation.json` | 与 01 同时提交：证据冲突 → needs_review 且全部留证 |
-| （测试内构造） | 翻转签名首字节：签名维度独立失败 |
+| `08-target-plus-valid-sbom.attestation.json` | 同声明含目标 tar.gz 与摘要正确的 sbom.json：只比较目标 subject，必须 allow（其他 subject 不影响目标产物） |
+| （测试内构造） | 翻转签名首字节：签名维度独立失败；声明只有 sbom.json 而缺目标 subject：明确拒绝 |
 
 ## HTTP API
 

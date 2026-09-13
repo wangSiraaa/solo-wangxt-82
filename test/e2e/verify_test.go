@@ -313,7 +313,94 @@ func TestConflictingEvidenceNeedsReview(t *testing.T) {
 	}
 }
 
-// 7) 签名被直接篡改：密码学维度独立失败，不得因为信任根里有同 keyid 而放行。
+//  7. 目标产物 + 同声明里摘要正确的 SBOM：只比较目标 subject，应 allow；
+//     sbom.json 既不与 tar 字节比较，也不得造成 hardReject。
+func TestTargetArtifactWithValidSBOMAllows(t *testing.T) {
+	h := loadHarness(t, "")
+	engine, _ := policy.EmbeddedEngine()
+	resp := h.verify(engine, goodArtifact(h), "08-target-plus-valid-sbom.attestation.json")
+	r := resp.Results[0]
+
+	if !r.Signature.Valid || !r.Issuer.Trusted {
+		t.Fatalf("签名/信任应成立: sig=%v issuer=%v", r.Signature.Valid, r.Issuer.Trusted)
+	}
+	if !r.Digest.Matched || r.Digest.HardReject {
+		t.Fatalf("目标 subject 匹配时应通过摘要闸门，SBOM 不得影响: %+v", r.Digest)
+	}
+	// 只比较了目标 tar.gz 一个 subject
+	if len(r.Digest.Subjects) != 1 || r.Digest.Subjects[0].Name != "payments-api-1.4.2.tar.gz" {
+		t.Fatalf("只应比较目标同名 subject，实际: %+v", r.Digest.Subjects)
+	}
+	if len(r.Digest.IgnoredSubjects) != 1 || r.Digest.IgnoredSubjects[0] != "payments-api-1.4.2.sbom.json" {
+		t.Fatalf("sbom.json 应被记录为未参与比对的 subject，实际: %v", r.Digest.IgnoredSubjects)
+	}
+	if !r.Policy.Allowed || resp.Decision != verifier.DecisionAllow {
+		t.Fatalf("目标产物+合法 SBOM 应 allow，实际 %s: %s", resp.Decision, resp.DecisionReason)
+	}
+}
+
+//  8. 声明里只有 sbom.json（摘要正确）、没有目标 tar.gz subject：明确拒绝，
+//     不能用其他 subject 的正确摘要顶替目标产物。
+func TestMissingTargetSubjectRejected(t *testing.T) {
+	h := loadHarness(t, "")
+	engine, _ := policy.EmbeddedEngine()
+
+	// 取 08 向量，删除其中的 tar.gz 目标 subject，只保留 sbom.json。
+	raw := h.env("08-target-plus-valid-sbom.attestation.json")
+	var env attestation.Envelope
+	if err := json.Unmarshal(raw, &env); err != nil {
+		t.Fatal(err)
+	}
+	body, err := base64.StdEncoding.DecodeString(env.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st attestation.Statement
+	if err := json.Unmarshal(body, &st); err != nil {
+		t.Fatal(err)
+	}
+	var sbomOnly []attestation.Subject
+	for _, s := range st.Subject {
+		if s.Name == "payments-api-1.4.2.sbom.json" {
+			sbomOnly = append(sbomOnly, s)
+		}
+	}
+	st.Subject = sbomOnly
+	signed, err := attestation.SignStatement(loadTrustedPrivate(t, h), &st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envJSON, _ := json.Marshal(signed)
+
+	req := verifier.Request{
+		ArtifactName: "payments-api-1.4.2.tar.gz",
+		ArtifactPath: goodArtifact(h),
+		Attestations: []verifier.AttestationInput{{SourceRef: "e2e", EnvelopeJSON: envJSON}},
+	}
+	resp, err := verifier.New(h.root, engine, h.st, fixedClock).Verify(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := resp.Results[0]
+	// 重新签名使用的可信私钥与信任根一致：签名维度应成立，
+	// 关键在于摘要闸门必须因“缺少目标 subject”硬拒绝。
+	if !r.Signature.Valid {
+		t.Fatalf("测试前置：重新签名后签名应有效: %s", r.Signature.Reason)
+	}
+	// 重新签名使用的可信私钥与信任根一致，签名应有效；关键是摘要闸门必须硬拒绝。
+	if !r.Digest.HardReject || r.Digest.Matched {
+		t.Fatalf("缺少目标 subject 必须硬拒绝: %+v", r.Digest)
+	}
+	if len(r.Digest.Subjects) != 0 || len(r.Digest.IgnoredSubjects) != 1 {
+		t.Fatalf("不应把 sbom.json 当匹配依据: compared=%+v ignored=%v",
+			r.Digest.Subjects, r.Digest.IgnoredSubjects)
+	}
+	if resp.Decision != verifier.DecisionDeny {
+		t.Fatalf("缺少目标 subject 应 deny，实际 %s", resp.Decision)
+	}
+}
+
+// 9) 签名被直接篡改：密码学维度独立失败，不得因为信任根里有同 keyid 而放行。
 func TestTamperedSignatureRejected(t *testing.T) {
 	h := loadHarness(t, "")
 	engine, _ := policy.EmbeddedEngine()

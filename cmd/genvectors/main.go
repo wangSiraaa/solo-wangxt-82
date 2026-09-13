@@ -102,13 +102,16 @@ func main() {
 	tamperedSum := sha256.Sum256(tampered)
 
 	// 4) 构造 Provenance 的工具函数 --------------------------------------
-	buildStatement := func(name, claimedSHA, builderID, sourceURI, commit string) *attestation.Statement {
+	buildStatement := func(name, claimedSHA, builderID, sourceURI, commit string,
+		extraSubjects ...attestation.Subject) *attestation.Statement {
+		subjects := []attestation.Subject{{
+			Name:   name,
+			Digest: map[string]string{"sha256": claimedSHA},
+		}}
+		subjects = append(subjects, extraSubjects...)
 		return &attestation.Statement{
-			Type: "https://in-toto.io/Statement/v1",
-			Subject: []attestation.Subject{{
-				Name:   name,
-				Digest: map[string]string{"sha256": claimedSHA},
-			}},
+			Type:          "https://in-toto.io/Statement/v1",
+			Subject:       subjects,
 			PredicateType: attestation.SLSAProvenanceType,
 			Predicate: mustJSON(map[string]any{
 				"buildDefinition": map[string]any{
@@ -137,6 +140,23 @@ func main() {
 	goodSHA := hex.EncodeToString(goodSum[:])
 	tamperedSHA := hex.EncodeToString(tamperedSum[:])
 
+	// 同一构建流程还产出一份 SBOM，作为声明里的第二个 subject。
+	// 它的摘要对自身字节是正确的，但绝不能被拿去和 tar.gz 目标文件比较。
+	sbomName := "payments-api-1.4.2.sbom.json"
+	sbomBytes := []byte("{\n" +
+		"  \"bomFormat\": \"CycloneDX\",\n" +
+		"  \"specVersion\": \"1.5\",\n" +
+		"  \"version\": 1,\n" +
+		"  \"components\": []\n" +
+		"}\n")
+	writeFile(filepath.Join(root, "artifacts", sbomName), sbomBytes, 0o644)
+	sbomSum := sha256.Sum256(sbomBytes)
+	sbomSHA := hex.EncodeToString(sbomSum[:])
+	sbomSubject := attestation.Subject{
+		Name:   sbomName,
+		Digest: map[string]string{"sha256": sbomSHA},
+	}
+
 	type vecDef struct {
 		file     string
 		key      demoKey
@@ -149,6 +169,8 @@ func main() {
 		// useTampered 表示该向量针对“被改过一字节”的产物核验，
 		// 因此即便声明摘要等于原始产物摘要，实际比对也必然失败。
 		useTampered bool
+		// extraSubjects 是同一声明里附带的其他产物 subject（如 SBOM）。
+		extraSubjects []attestation.Subject
 	}
 	vecs := []vecDef{
 		{
@@ -188,6 +210,12 @@ func main() {
 			subject:  artifactName,
 			note:     "JSON 字段齐全但摘要值是伪造的：不能只检查字段，必须重算并拒绝",
 		},
+		{
+			file: "08-target-plus-valid-sbom.attestation.json", key: trusted,
+			builder: trustedBuilder, source: allowedSource, commit: allowedCommit,
+			claimSHA: goodSHA, subject: artifactName, extraSubjects: []attestation.Subject{sbomSubject},
+			note: "同一声明含目标 tar.gz 与摘要正确的 sbom.json：只比较目标 subject，必须 allow",
+		},
 	}
 
 	type expected struct {
@@ -210,7 +238,7 @@ func main() {
 	var expectedList []expected
 
 	for _, d := range vecs {
-		st := buildStatement(d.subject, d.claimSHA, d.builder, d.source, d.commit)
+		st := buildStatement(d.subject, d.claimSHA, d.builder, d.source, d.commit, d.extraSubjects...)
 		env, err := attestation.SignStatement(d.key.priv, st)
 		must(err)
 		raw := mustMarshalIndent(env)

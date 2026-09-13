@@ -1,6 +1,6 @@
 // Package artifact 只做一件与安全相关的事：读取**本地实际产物文件**的
-// 字节流并计算摘要，然后与 in-toto statement subject 中声明的摘要逐个
-// 比对。它绝不执行、解压、反序列化或以任何方式“解释”产物内容。
+// 字节流并计算摘要，然后与 in-toto statement 中**目标产物同名** subject
+// 声明的摘要比对。它绝不执行、解压、反序列化或以任何方式“解释”产物内容。
 package artifact
 
 import (
@@ -21,7 +21,7 @@ var supportedAlgorithms = map[string]bool{
 	"sha256": true,
 }
 
-// SubjectMatch 是某一个 subject 与实际产物的摘要比对结果。
+// SubjectMatch 是某一个目标 subject 摘要与实际产物的比对结果。
 type SubjectMatch struct {
 	Name      string `json:"name"`
 	Algorithm string `json:"algorithm,omitempty"`
@@ -34,16 +34,23 @@ type SubjectMatch struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// DigestResult 汇总一份声明的全部 subject 与实际产物的比对结果。
+// DigestResult 汇总一份声明中**目标产物同名 subject** 与实际产物的比对结果。
 type DigestResult struct {
 	// ArtifactPath 是被核验的本地文件路径。
 	ArtifactPath string `json:"artifactPath"`
-	// Matched 为 true 当且仅当存在至少一个 subject，且每个 subject
-	// 都至少有一个受支持算法的摘要与实际字节一致。
+	// TargetName 是本次核验请求的目标产物名；只有同名 subject 参与比对。
+	TargetName string `json:"targetName"`
+	// Matched 为 true 当且仅当至少存在一个同名 subject，且每个同名
+	// subject 都至少有一个受支持算法的摘要与实际字节一致。
 	Matched  bool           `json:"matched"`
 	Subjects []SubjectMatch `json:"subjects"`
-	// HardReject 表示命中“摘要与实际文件不一致”的硬性拒绝条件，
-	// 上层必须直接拒绝，不允许策略放行。
+	// IgnoredSubjects 是声明中名称与目标产物不一致、未参与本次比对的
+	// subject（例如同一份声明里附带的 sbom.json）。保留名称仅用于取证透明：
+	// 这些 subject 的摘要绝不与目标文件字节比较，其正确与否需要由针对
+	// 各自文件的独立核验负责。
+	IgnoredSubjects []string `json:"ignoredSubjects,omitempty"`
+	// HardReject 表示命中硬性拒绝条件，上层必须直接拒绝，
+	// 不允许策略放行：没有目标 subject、摘要不一致、仅有不支持的算法等。
 	HardReject bool   `json:"hardReject,omitempty"`
 	Reason     string `json:"reason,omitempty"`
 }
@@ -64,13 +71,17 @@ func HashFile(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// VerifySubjectDigest 把 statement 的每个 subject 摘要与实际文件比对。
+// VerifySubjectDigest 只把 statement 中**名称等于 artifactName** 的 subject
+// 摘要与实际文件比对；同名 subject 可有多个（声明重复列名），每个都必须匹配。
+// 名称不同的 subject（如同一份声明附带的 sbom.json）一律不参与比对，
+// 仅在 IgnoredSubjects 中留名。
 //
-// 这是需求中明确的硬性检查：声明里的摘要与实际文件不一致直接拒绝，
-// 不能因为 JSON 字段齐全就算通过。即便签名有效、签发者可信，
-// 这里不一致也必须拒绝。
-func VerifySubjectDigest(path string, actualSHA256 string, st *attestation.Statement) DigestResult {
-	res := DigestResult{ArtifactPath: path}
+// 这是需求中明确的硬性检查：
+//   - 声明里找不到目标产物的 subject：明确硬拒绝（不能拿其他 subject 顶替）；
+//   - 目标 subject 的摘要与实际文件不一致：硬拒绝，不能因为 JSON 字段
+//     齐全就算通过。即便签名有效、签发者可信，这里不一致也必须拒绝。
+func VerifySubjectDigest(path, artifactName, actualSHA256 string, st *attestation.Statement) DigestResult {
+	res := DigestResult{ArtifactPath: path, TargetName: artifactName}
 
 	if st == nil {
 		res.Reason = "载荷不是可解析的 in-toto statement，无法比对摘要"
@@ -78,9 +89,39 @@ func VerifySubjectDigest(path string, actualSHA256 string, st *attestation.State
 		return res
 	}
 
-	var unsupportedSeen, mismatchSeen bool
+	// 1) 按名称切分：同名 subject 才是本次核验对象。
+	var targetSubjects []attestation.Subject
+	ignoredSet := map[string]struct{}{}
 	for _, subj := range st.Subject {
-		// 一个 subject 可能给出多个算法；按算法名排序保证输出稳定可复现。
+		if subj.Name == artifactName {
+			targetSubjects = append(targetSubjects, subj)
+			continue
+		}
+		ignoredSet[subj.Name] = struct{}{}
+	}
+	for name := range ignoredSet {
+		res.IgnoredSubjects = append(res.IgnoredSubjects, name)
+	}
+	sort.Strings(res.IgnoredSubjects)
+
+	// 2) 没有目标 subject：明确拒绝，不能用 sbom.json 等其他 subject 的
+	//    正确摘要冒充目标产物。
+	if len(targetSubjects) == 0 {
+		res.HardReject = true
+		res.Matched = false
+		if len(res.IgnoredSubjects) > 0 {
+			res.Reason = fmt.Sprintf(
+				"声明中没有名称为 %q 的 subject（仅有其他产物 %v），无法确认目标产物完整性，硬性拒绝",
+				artifactName, res.IgnoredSubjects)
+		} else {
+			res.Reason = fmt.Sprintf("声明中没有名称为 %q 的 subject，硬性拒绝", artifactName)
+		}
+		return res
+	}
+
+	// 3) 逐个目标 subject 比对；按 subject 出现顺序输出，算法名排序保证稳定。
+	var unsupportedSeen, mismatchSeen bool
+	for _, subj := range targetSubjects {
 		algs := make([]string, 0, len(subj.Digest))
 		for alg := range subj.Digest {
 			algs = append(algs, alg)
@@ -97,7 +138,7 @@ func VerifySubjectDigest(path string, actualSHA256 string, st *attestation.State
 				res.Subjects = append(res.Subjects, m)
 				continue
 			}
-			// 目前白名单仅 sha256，所有 subject 与同一实际文件比对。
+			// 白名单内的算法（当前仅 sha256）与目标文件实际字节比对。
 			m.ActualDigest = actualSHA256
 			if claimed == actualSHA256 {
 				m.Match = true
@@ -109,28 +150,28 @@ func VerifySubjectDigest(path string, actualSHA256 string, st *attestation.State
 			res.Subjects = append(res.Subjects, m)
 		}
 		if !subjectMatched {
-			// 若该 subject 完全没有可匹配的算法，也记录一条汇总原因。
 			res.Subjects = append(res.Subjects, SubjectMatch{
-				Name: subj.Name, Reason: "该 subject 没有任何受支持算法的摘要与实际文件匹配",
+				Name:   subj.Name,
+				Reason: "该目标 subject 没有任何受支持算法的摘要与实际文件匹配",
 			})
 		}
 	}
 
 	switch {
 	case mismatchSeen:
-		// 显式声明了 sha256 但值对不上：硬拒绝。
+		// 目标 subject 显式声明了 sha256 但值对不上：硬拒绝。
 		res.HardReject = true
 		res.Matched = false
-		res.Reason = "声明摘要与实际产物字节不一致，硬性拒绝"
-	case unsupportedSeen && len(res.Subjects) > 0 && !anyMatch(res.Subjects):
+		res.Reason = "目标产物的声明摘要与实际字节不一致，硬性拒绝"
+	case unsupportedSeen && !anyMatch(res.Subjects):
 		res.HardReject = true
 		res.Matched = false
-		res.Reason = "声明仅提供了不支持的摘要算法，无法确认产物完整性"
+		res.Reason = "目标 subject 仅提供了不支持的摘要算法，无法确认产物完整性"
 	default:
 		res.Matched = anyMatch(res.Subjects)
 		if !res.Matched {
 			res.HardReject = true
-			res.Reason = "没有任何 subject 摘要能与实际产物匹配"
+			res.Reason = "目标 subject 没有任何摘要能与实际产物匹配"
 		}
 	}
 	return res
