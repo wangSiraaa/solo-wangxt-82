@@ -1,0 +1,10 @@
+{
+  "artifactName": "payments-api-1.4.2.tar.gz",
+  "artifactPath": "demo/artifacts/payments-api-1.4.2.tampered.tar.gz",
+  "attestations": [
+    {
+      "file": "attestations/02-tampered-file.attestation.json",
+      "sourceRef": "ci-primary"
+    }
+  ]
+}

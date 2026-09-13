@@ -1,0 +1,11 @@
+{
+  "name": "scbverify demo trust root",
+  "trustedKeys": [
+    {
+      "keyId": "e7c1da4c4d6b8bc9e1d250795bccf2af6b231daeb09529b18ea6abbcd318dcdd",
+      "issuer": "https://build.example.com/builder/primary",
+      "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAEwgpLt/GU9ndjqzc7iKVUoc/RZfaNNr2EG5Rq/csNng=\n-----END PUBLIC KEY-----\n"
+    }
+  ],
+  "version": 1
+}

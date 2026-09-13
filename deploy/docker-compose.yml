@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${SCBVERIFY_DB_USER:?set SCBVERIFY_DB_USER}
+      POSTGRES_PASSWORD: ${SCBVERIFY_DB_PASSWORD:?set SCBVERIFY_DB_PASSWORD}
+      POSTGRES_DB: ${SCBVERIFY_DB_NAME:-scbverify}
+    ports:
+      - "5432:5432"
+    volumes:
+      - scbverify-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  scbverify-pg:

@@ -1,0 +1,23 @@
+# 生成的演示向量包含私钥材料（仅测试用），按需保留在本地演示目录
+demo/keys/*.priv.pem
+
+# 本地凭据与连接配置：保留不含真实值的 .env.example
+.env
+.env.*
+!.env.example
+*.key
+*.key.pem
+*.priv.pem
+*.p12
+*.pfx
+credentials.json
+credentials.*
+secrets/
+config.local.*
+*.local.env
+token.txt
+tokens.json
+
+# 构建产物
+/bin/
+*.out
