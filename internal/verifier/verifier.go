@@ -25,6 +25,7 @@ import (
 	"scbverify/internal/artifact"
 	"scbverify/internal/attestation"
 	"scbverify/internal/policy"
+	"scbverify/internal/revocation"
 	"scbverify/internal/store"
 	"scbverify/internal/trust"
 )
@@ -58,8 +59,12 @@ type PerAttestationResult struct {
 
 	// (1) 签名是否密码学有效
 	Signature attestation.SignatureCheck `json:"signature"`
+	// EnvelopeSHA256 是原始 DSSE 信封字节的摘要（用于绑定可信时间证据）。
+	EnvelopeSHA256 string `json:"envelopeSha256,omitempty"`
 	// (2) 签发者是否受信任
 	Issuer trust.TrustResult `json:"issuer"`
+	// 撤销闸门（实时下载）；nil 表示本次未配置撤销清单。
+	Revocation *revocation.GateResult `json:"revocation,omitempty"`
 	// (3) 声明是否符合策略
 	Policy policy.Result `json:"policy"`
 	// (4) 摘要与实际产物字节是否一致（硬性闸门）
@@ -69,11 +74,24 @@ type PerAttestationResult struct {
 	PredicateType string             `json:"predicateType,omitempty"`
 	BuilderID     string             `json:"builderId,omitempty"`
 	Source        *policy.SourceFact `json:"source,omitempty"`
-	ParseError    string             `json:"parseError,omitempty"`
+	// Dependencies 是 provenance 中声明的固定上游输入（名称+摘要）。
+	Dependencies []ResolvedDependency `json:"dependencies,omitempty"`
+	// SelfReportedTime 是构建者自报时间（不可信，仅留证）。
+	SelfReportedTime string `json:"selfReportedTime,omitempty"`
+	ParseError       string `json:"parseError,omitempty"`
 }
 
-// FullyPassed 报告该证明是否四关全过。
+// ResolvedDependency 是上游固定输入。
+type ResolvedDependency struct {
+	Name   string            `json:"name"`
+	Digest map[string]string `json:"digest"`
+}
+
+// FullyPassed 报告该证明是否四关全过（撤销闸门命中则必然不通过）。
 func (p PerAttestationResult) FullyPassed() bool {
+	if p.Revocation != nil && p.Revocation.Revoked {
+		return false
+	}
 	return p.Signature.Valid && p.Issuer.Trusted && p.Policy.Allowed && p.Digest.Matched
 }
 
@@ -108,15 +126,23 @@ type Verifier struct {
 	root    *trust.Root
 	engine  *policy.Engine
 	st      store.Store
+	rev     *revocation.List
 	nowFunc func() time.Time
 }
 
 // New 构造核验器。nowFunc 为 nil 时使用真实时钟（测试可注入固定时间）。
 func New(root *trust.Root, engine *policy.Engine, st store.Store, nowFunc func() time.Time) *Verifier {
+	return NewWithRevocation(root, engine, st, nil, nowFunc)
+}
+
+// NewWithRevocation 构造带撤销清单的核验器。下载闸门命中已撤销密钥时
+// fail-closed（不因时间证据放行）。
+func NewWithRevocation(root *trust.Root, engine *policy.Engine, st store.Store,
+	rev *revocation.List, nowFunc func() time.Time) *Verifier {
 	if nowFunc == nil {
 		nowFunc = func() time.Time { return time.Now().UTC() }
 	}
-	return &Verifier{root: root, engine: engine, st: st, nowFunc: nowFunc}
+	return &Verifier{root: root, engine: engine, st: st, rev: rev, nowFunc: nowFunc}
 }
 
 // Verify 执行核验并持久化证据与判定。
@@ -175,9 +201,17 @@ func (v *Verifier) Verify(ctx context.Context, req Request) (*Response, error) {
 			return nil, err
 		}
 		resp.Results[idx].StoredAttestationID = attID
+
+		// 持久化依赖产物链（下游产物 -> 固定上游输入），供撤销影响传播。
+		if edges := dependencyEdges(artifactID, attID, resp.Results[idx]); len(edges) > 0 {
+			if err := v.st.AddDependencyEdges(ctx, edges); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	// 4) 汇总独立结论与冲突。
+	revokedCount := 0
 	for _, r := range resp.Results {
 		if r.Signature.Valid {
 			resp.AnySignatureValid = true
@@ -187,6 +221,9 @@ func (v *Verifier) Verify(ctx context.Context, req Request) (*Response, error) {
 		}
 		if r.Policy.Allowed {
 			resp.AnyPolicyAllowed = true
+		}
+		if r.Revocation != nil && r.Revocation.Revoked {
+			revokedCount++
 		}
 		for _, sm := range r.Digest.Subjects {
 			if !sm.Match && sm.Algorithm != "" {
@@ -214,6 +251,10 @@ func (v *Verifier) Verify(ctx context.Context, req Request) (*Response, error) {
 	conflict := len(groups) > 0
 
 	switch {
+	case revokedCount > 0:
+		resp.Decision = DecisionDeny
+		resp.DecisionReason = fmt.Sprintf(
+			"%d 份证据的签名密钥已撤销，实时下载闸门 fail-closed（历史是否受影响须走复核）", revokedCount)
 	case resp.AnyDigestMismatch:
 		resp.Decision = DecisionDeny
 		resp.DecisionReason = "存在摘要与实际产物不一致的证据，硬性拒绝（产物疑似被篡改）"
@@ -324,10 +365,9 @@ func (v *Verifier) verifyOne(
 	// (1) 签名有效性（独立结论一）。
 	sigCheck, body, st := attestation.VerifyEnvelope(env, known)
 	pr.Signature = sigCheck
+	pr.EnvelopeSHA256 = canonicalEnvelopeSHA(in.EnvelopeJSON)
 
 	// (4) 摘要闸门：只比对与目标产物同名的 subject，基于实际字节重算。
-	// 无法解析 statement 时记录硬失败；其他名称的 subject（如 sbom.json）
-	// 不参与本次目标产物比对。
 	pr.Digest = artifact.VerifySubjectDigest(artifactPath, artifactName, actualSHA, st)
 
 	// 没有合法 statement 时，信任与策略无法继续，给出独立失败结论。
@@ -348,10 +388,41 @@ func (v *Verifier) verifyOne(
 		s := *src
 		pr.Source = &s
 	}
+	// 提取固定上游输入与自报时间（后者仅留证、不可信）。
+	if st.PredicateType == attestation.SLSAProvenanceType {
+		if prov, perr := attestation.ParseSLSAProvenance(st.Predicate); perr == nil {
+			for _, rd := range prov.BuildDefinition.ResolvedDependencies {
+				if rd.Name == "" || len(rd.Digest) == 0 {
+					continue
+				}
+				pr.Dependencies = append(pr.Dependencies, ResolvedDependency{
+					Name: rd.Name, Digest: rd.Digest,
+				})
+			}
+			if prov.RunDetails.Metadata.FinishedOn != "" {
+				pr.SelfReportedTime = prov.RunDetails.Metadata.FinishedOn
+			} else if prov.RunDetails.Metadata.StartedOn != "" {
+				pr.SelfReportedTime = prov.RunDetails.Metadata.StartedOn
+			}
+		}
+	}
 
 	// (2) 签发者可信（独立结论二）。
 	pr.Issuer = v.root.Evaluate(sigCheck.AcceptedKeyID, builderID)
-
+	// 撤销闸门（实时下载，fail-closed）：命中撤销清单即标记。
+	// 历史复核不走这里，由 review 包依据可信时间证据另行分类。
+	if v.rev != nil && sigCheck.AcceptedKeyID != "" {
+		gate := v.rev.Gate(sigCheck.AcceptedKeyID)
+		gateCopy := gate
+		pr.Revocation = &gateCopy
+		if gate.Revoked {
+			pr.Issuer.Trusted = false
+			pr.Issuer.Revoked = true
+			pr.Issuer.Reason = "签名密钥已撤销（实时下载闸门 fail-closed）: " + gate.Reason
+		}
+	} else {
+		pr.Revocation = nil
+	}
 	// (3) 策略符合性（独立结论三）。
 	inp := policy.Input{
 		Statement: policy.StatementInput{
@@ -494,4 +565,47 @@ func deniedPolicy(e *policy.Engine, violations []string) policy.Result {
 func policyModuleSHA(module string) string {
 	sum := sha256.Sum256([]byte(module))
 	return hex.EncodeToString(sum[:])
+}
+
+// sha256HexBytes 返回字节的十六进制 SHA-256。
+func sha256HexBytes(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+// canonicalEnvelopeSHA 返回 DSSE 信封的规范化摘要（用于绑定时间证据）。
+func canonicalEnvelopeSHA(raw []byte) string {
+	s, err := attestation.CanonicalEnvelopeSHA256(raw)
+	if err != nil {
+		return sha256HexBytes(raw)
+	}
+	return s
+}
+
+// dependencyEdges 把单份证明声明的固定上游输入转成可持久化的依赖边。
+// 优先取 sha256；没有 sha256 时取该 subject 的第一个算法（排序后），
+// 以保证传播链至少有一个固定摘要。
+func dependencyEdges(artifactID, attestationID int64, r PerAttestationResult) []store.DependencyEdge {
+	var edges []store.DependencyEdge
+	for _, dep := range r.Dependencies {
+		depSHA := dep.Digest["sha256"]
+		if depSHA == "" {
+			algs := make([]string, 0, len(dep.Digest))
+			for a := range dep.Digest {
+				algs = append(algs, a)
+			}
+			sort.Strings(algs)
+			if len(algs) > 0 {
+				depSHA = algs[0] + ":" + dep.Digest[algs[0]]
+			}
+		}
+		if depSHA == "" {
+			continue
+		}
+		edges = append(edges, store.DependencyEdge{
+			ArtifactID: artifactID, AttestationID: attestationID,
+			DepName: dep.Name, DepSHA256: depSHA,
+		})
+	}
+	return edges
 }

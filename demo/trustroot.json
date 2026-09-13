@@ -1,11 +1,23 @@
 {
   "name": "scbverify demo trust root",
+  "timestampAuthorities": [
+    {
+      "name": "scbverify demo TSA",
+      "keyId": "1c677e1d2a0050c8338dedbf107ae82dcaea8c60b24b41602c2b33ec9d546605",
+      "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAhCBI+Ve7KrrtXZ9pwDbCW+u3y9Ln2yRyN5mJ0jZJ1cE=\n-----END PUBLIC KEY-----\n"
+    }
+  ],
   "trustedKeys": [
     {
       "keyId": "e7c1da4c4d6b8bc9e1d250795bccf2af6b231daeb09529b18ea6abbcd318dcdd",
       "issuer": "https://build.example.com/builder/primary",
       "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAEwgpLt/GU9ndjqzc7iKVUoc/RZfaNNr2EG5Rq/csNng=\n-----END PUBLIC KEY-----\n"
+    },
+    {
+      "keyId": "caa7873d1a4723195db1eb268e7efbd1c8b1076e114d5d3ee18d373a7b1c21ef",
+      "issuer": "https://build.example.com/builder/secondary",
+      "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEASSbfjjl0myaw90lCHTA9LG3Q5GmhsLzEm6i3HIrOvtk=\n-----END PUBLIC KEY-----\n"
     }
   ],
-  "version": 1
+  "version": 2
 }

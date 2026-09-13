@@ -1,0 +1,85 @@
+{
+  "compromisedAt": "2026-03-05T00:00:00Z",
+  "compromisedKeyId": "e7c1da4c4d6b8bc9e1d250795bccf2af6b231daeb09529b18ea6abbcd318dcdd",
+  "evidence": [
+    {
+      "artifactName": "root-good-1.0.tar.gz",
+      "attestation": "revocation/attestations/att-root-good-1.0.tar.gz.json",
+      "timestamps": [
+        "revocation/timestamps/ts-root-good-1.0.tar.gz.json"
+      ]
+    },
+    {
+      "artifactName": "root-orphan-1.0.tar.gz",
+      "attestation": "revocation/attestations/att-root-orphan-1.0.tar.gz.json",
+      "timestamps": [
+        "revocation/timestamps/ts-root-orphan-1.0.tar.gz.json"
+      ]
+    },
+    {
+      "artifactName": "root-insufficient-1.0.tar.gz",
+      "attestation": "revocation/attestations/att-root-insufficient-1.0.tar.gz.json"
+    },
+    {
+      "artifactName": "downstream-once-1.0.tar.gz",
+      "attestation": "revocation/attestations/att-downstream-once-1.0.tar.gz.json",
+      "timestamps": [
+        "revocation/timestamps/ts-downstream-once-1.0.tar.gz.json"
+      ]
+    },
+    {
+      "artifactName": "downstream-twice-a-1.0.tar.gz",
+      "attestation": "revocation/attestations/att-downstream-twice-a-1.0.tar.gz.json",
+      "timestamps": [
+        "revocation/timestamps/ts-downstream-twice-a-1.0.tar.gz.json"
+      ]
+    },
+    {
+      "artifactName": "downstream-twice-b-1.0.tar.gz",
+      "attestation": "revocation/attestations/att-downstream-twice-b-1.0.tar.gz.json",
+      "timestamps": [
+        "revocation/timestamps/ts-downstream-twice-b-1.0.tar.gz.json"
+      ]
+    },
+    {
+      "artifactName": "downstream-propagated-1.0.tar.gz",
+      "attestation": "revocation/attestations/att-downstream-propagated-1.0.tar.gz.json",
+      "timestamps": [
+        "revocation/timestamps/ts-downstream-propagated-1.0.tar.gz.json"
+      ]
+    },
+    {
+      "artifactName": "downstream-of-affected-1.0.tar.gz",
+      "attestation": "revocation/attestations/att-downstream-of-affected-1.0.tar.gz.json",
+      "timestamps": [
+        "revocation/timestamps/ts-downstream-of-affected-1.0.tar.gz.json"
+      ]
+    },
+    {
+      "artifactName": "independent-1.0.tar.gz",
+      "attestation": "revocation/attestations/att-independent-1.0.tar.gz.json",
+      "timestamps": [
+        "revocation/timestamps/ts-independent-1.0.tar.gz.json"
+      ]
+    }
+  ],
+  "expectedClassification": {
+    "downstream-of-affected-1.0.tar.gz": "affected",
+    "downstream-once-1.0.tar.gz": "unaffected",
+    "downstream-propagated-1.0.tar.gz": "affected",
+    "downstream-twice-a-1.0.tar.gz": "unaffected",
+    "downstream-twice-b-1.0.tar.gz": "unaffected",
+    "independent-1.0.tar.gz": "unaffected",
+    "root-good-1.0.tar.gz": "unaffected",
+    "root-insufficient-1.0.tar.gz": "insufficient",
+    "root-orphan-1.0.tar.gz": "affected"
+  },
+  "feedFile": "revocation/revocation-feed.json",
+  "gateNote": "实时下载闸门：所有用被撤销密钥签名的证据一律 deny（时间证据不放行）",
+  "historyNote": "历史复核区分 unaffected / insufficient / affected；自报 metadata 时间不可信",
+  "name": "revocation",
+  "revocationFeedVersion": 3,
+  "revokedAt": "2026-04-01T00:00:00Z",
+  "tsaKeyId": "1c677e1d2a0050c8338dedbf107ae82dcaea8c60b24b41602c2b33ec9d546605",
+  "unrevokedKeyId": "caa7873d1a4723195db1eb268e7efbd1c8b1076e114d5d3ee18d373a7b1c21ef"
+}

@@ -1,0 +1,13 @@
+{
+  "events": [
+    {
+      "compromisedAt": "2026-03-05T00:00:00Z",
+      "keyId": "e7c1da4c4d6b8bc9e1d250795bccf2af6b231daeb09529b18ea6abbcd318dcdd",
+      "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAEwgpLt/GU9ndjqzc7iKVUoc/RZfaNNr2EG5Rq/csNng=\n-----END PUBLIC KEY-----\n",
+      "reason": "演示：CI 构建签名密钥疑似泄露",
+      "revokedAt": "2026-04-01T00:00:00Z"
+    }
+  ],
+  "name": "scbverify demo revocation feed",
+  "version": 3
+}

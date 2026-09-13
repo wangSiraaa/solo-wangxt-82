@@ -11,6 +11,8 @@ import (
 	"context"
 	"crypto"
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,6 +46,9 @@ type BuildDefinition struct {
 	// 单独定义 Source 结构配合解析。
 	ExternalParameters json.RawMessage `json:"externalParameters"`
 	InternalParameters json.RawMessage `json:"internalParameters"`
+	// ResolvedDependencies 是本次构建实际使用的上游输入（源码/产物）的
+	// 固定描述（名称 + 摘要）。用于构建依赖产物链。
+	ResolvedDependencies []ResourceDescriptor `json:"resolvedDependencies,omitempty"`
 }
 
 // SourceRef 描述构建所用源码仓库与固定版本。
@@ -167,6 +172,26 @@ func ParseEnvelope(data []byte) (*Envelope, error) {
 }
 
 // toLibEnvelope / fromLibEnvelope 在本地类型与库类型之间转换。
+// --- 规范化信封摘要：时间证据绑定与跨存储比对统一使用该摘要 ---
+
+// CanonicalEnvelopeSHA256 返回 DSSE 信封的**规范化**字节摘要：先解析再以
+// 确定字段顺序重新 JSON 编码（Go 对 map 键排序）。这样无论信封原文的空白、
+// 键序如何，也无论存储是否经过 JSONB 规范化，绑定的摘要都一致。
+//
+// 时间证据（TSA）与复核服务必须使用该摘要，而不是原始字节摘要。
+func CanonicalEnvelopeSHA256(raw []byte) (string, error) {
+	var env Envelope
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return "", fmt.Errorf("attestation: 信封规范化失败: %w", err)
+	}
+	canonical, err := json.Marshal(&env)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(canonical)
+	return hex.EncodeToString(sum[:]), nil
+}
+
 func (e *Envelope) toLibEnvelope() *dsse.Envelope {
 	sigs := make([]dsse.Signature, 0, len(e.Signatures))
 	for _, s := range e.Signatures {

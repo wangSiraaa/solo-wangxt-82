@@ -64,19 +64,34 @@ func main() {
 	// 1) 确定性密钥 --------------------------------------------------------
 	trusted := loadKey("trusted-builder", filepath.Join(root, "keys", "trusted-builder"))
 	untrusted := loadKey("untrusted-builder", filepath.Join(root, "keys", "untrusted-builder"))
+	// 撤销场景额外密钥：TSA 时间戳权威、未泄露的第二构建者。
+	tsa := loadKey("demo-tsa", filepath.Join(root, "keys", "demo-tsa"))
+	builder2 := loadKey("trusted-builder-secondary",
+		filepath.Join(root, "keys", "trusted-builder-secondary"))
 
-	// 2) 信任根：只信任 trusted-builder ---------------------------------
+	// 2) 信任根：主机构建者 + 第二构建者 + TSA 时间戳权威 ----------------
 	type trustedKeyJSON struct {
 		KeyID        string `json:"keyId"`
 		Issuer       string `json:"issuer"`
 		PublicKeyPEM string `json:"publicKeyPem"`
 	}
+	type tsaJSON struct {
+		Name         string `json:"name"`
+		KeyID        string `json:"keyId"`
+		PublicKeyPEM string `json:"publicKeyPem"`
+	}
 	trustPubPEM, _ := cryptokit.MarshalPublicPEM(trusted.pub)
+	builder2PubPEM, _ := cryptokit.MarshalPublicPEM(builder2.pub)
+	tsaPubPEM, _ := cryptokit.MarshalPublicPEM(tsa.pub)
 	trustRoot := map[string]any{
 		"name":    "scbverify demo trust root",
-		"version": 1,
-		"trustedKeys": []trustedKeyJSON{{
-			KeyID: trusted.id, Issuer: trustedBuilder, PublicKeyPEM: string(trustPubPEM),
+		"version": 2,
+		"trustedKeys": []trustedKeyJSON{
+			{KeyID: trusted.id, Issuer: trustedBuilder, PublicKeyPEM: string(trustPubPEM)},
+			{KeyID: builder2.id, Issuer: trustedBuilderSecondary, PublicKeyPEM: string(builder2PubPEM)},
+		},
+		"timestampAuthorities": []tsaJSON{{
+			Name: "scbverify demo TSA", KeyID: tsa.id, PublicKeyPEM: string(tsaPubPEM),
 		}},
 	}
 	writeJSON(filepath.Join(root, "trustroot.json"), trustRoot)
@@ -325,6 +340,10 @@ func main() {
 	expiredPolicy := generateExpiredPolicy()
 	writeFile(filepath.Join(root, "policies", "trust_policy.expired.rego"), []byte(expiredPolicy), 0o644)
 
+	// 5b) 密钥撤销场景：撤销清单 + 带依赖链与可信时间证据的历史产物 --------
+	revocationManifest := generateRevocationScenario(
+		filepath.Join(root, "revocation"), trusted, builder2, tsa)
+
 	// 6) expected vectors manifest ----------------------------------------
 	manifest := map[string]any{
 		"generatedAt":              "deterministic (fixed seeds, eval time " + evalTime + ")",
@@ -340,6 +359,7 @@ func main() {
 		"expiredPolicyVersion":     "2025.06",
 		"expected":                 expectedList,
 		"conflictExpectedDecision": "needs_review",
+		"revocationScenario":       revocationManifest,
 	}
 	writeJSON(filepath.Join(root, "expected_vectors.json"), manifest)
 

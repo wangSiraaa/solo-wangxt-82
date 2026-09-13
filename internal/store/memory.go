@@ -9,15 +9,20 @@ import (
 // MemoryStore 是用于测试/无数据库演示的线程安全内存实现。
 // 语义与 PostgreSQL 实现保持一致：证据冲突不去重、判定全量保留。
 type MemoryStore struct {
-	mu           sync.Mutex
-	artifactSeq  int64
-	attestSeq    int64
-	verifSeq     int64
-	artifacts    []Artifact
-	attestations []AttestationRecord
-	policies     map[string]PolicyVersion
-	verifs       []Verification
-	verifAttests map[int64][]AttestationVerdict
+	mu                  sync.Mutex
+	artifactSeq         int64
+	attestSeq           int64
+	verifSeq            int64
+	tteSeq              int64
+	depSeq              int64
+	artifacts           []Artifact
+	attestations        []AttestationRecord
+	policies            map[string]PolicyVersion
+	verifs              []Verification
+	verifAttests        map[int64][]AttestationVerdict
+	revocationEvents    []RevocationEventRecord
+	trustedTimeEvidence []TrustedTimeEvidenceRecord
+	dependencies        []DependencyEdge
 }
 
 // NewMemoryStore 创建空内存存储。
@@ -74,6 +79,9 @@ func (m *MemoryStore) SaveVerification(_ context.Context, p SaveVerificationPara
 	v := p.Verification
 	v.ID = m.verifSeq
 	v.ArtifactID = p.Artifact.ID
+	if v.ReviewKind == "" {
+		v.ReviewKind = "gate" // 与 PostgreSQL COALESCE 保持一致
+	}
 	if v.EvaluatedAt.IsZero() {
 		v.EvaluatedAt = time.Now().UTC()
 	}
@@ -89,6 +97,18 @@ func (m *MemoryStore) GetArtifact(_ context.Context, name, sha256 string) (*Arti
 	defer m.mu.Unlock()
 	for i := range m.artifacts {
 		if m.artifacts[i].Name == name && m.artifacts[i].SHA256 == sha256 {
+			a := m.artifacts[i]
+			return &a, nil
+		}
+	}
+	return nil, ErrNotFound
+}
+
+func (m *MemoryStore) GetArtifactByID(_ context.Context, id int64) (*Artifact, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.artifacts {
+		if m.artifacts[i].ID == id {
 			a := m.artifacts[i]
 			return &a, nil
 		}

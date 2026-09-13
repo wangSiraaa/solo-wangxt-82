@@ -145,7 +145,7 @@ func TestValidVectorAllows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读取判定记录: %v", err)
 	}
-	if rec.PolicyVersion != "2026.09" || rec.TrustRootVersion != 1 {
+	if rec.PolicyVersion != "2026.09" || rec.TrustRootVersion != 2 {
 		t.Fatalf("判定版本留痕错误: %+v", rec)
 	}
 }

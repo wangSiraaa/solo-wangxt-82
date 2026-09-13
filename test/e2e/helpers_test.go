@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"scbverify/internal/attestation"
 	"scbverify/internal/cryptokit"
 	"scbverify/internal/trust"
 )
@@ -16,6 +17,15 @@ import (
 func sha256Hex(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
+}
+
+// canonicalEnvSHA 返回 DSSE 信封的规范化摘要（绑定时间证据时使用）。
+func canonicalEnvSHA(b []byte) string {
+	s, err := attestation.CanonicalEnvelopeSHA256(b)
+	if err != nil {
+		panic(err)
+	}
+	return s
 }
 
 // mustReadFile 读取文件，失败即终止测试。
@@ -51,4 +61,10 @@ func loadTrustedPrivate(t *testing.T, h *harness) ed25519.PrivateKey {
 		t.Fatal(err)
 	}
 	return priv
+}
+
+// loadDemoTSAPrivate 加载演示 TSA 时间戳权威私钥（测试中补盖时间证据）。
+func loadDemoTSAPrivate(h *harness) (ed25519.PrivateKey, error) {
+	return cryptokit.LoadPrivatePEMFile(
+		filepath.Join(h.demoRoot, "keys", "demo-tsa.priv.pem"))
 }

@@ -22,6 +22,7 @@ policy_meta := {
 # 显式允许的构建者身份（必须与信任根中密钥绑定的 issuer 一致）。
 allowed_builders := {
 	"https://build.example.com/builder/primary",
+	"https://build.example.com/builder/secondary",
 }
 
 # 显式允许的源码仓库（精确匹配，不做前缀猜测）。

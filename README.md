@@ -117,7 +117,43 @@ go run ./cmd/verifyctl -name payments-api-1.4.2.tar.gz \
 | `06-digest-field-mismatch.attestation.json` | JSON 字段齐全但摘要值伪造：必须重算并拒绝 |
 | `07-conflicting-commit.attestation.json` | 与 01 同时提交：证据冲突 → needs_review 且全部留证 |
 | `08-target-plus-valid-sbom.attestation.json` | 同声明含目标 tar.gz 与摘要正确的 sbom.json：只比较目标 subject，必须 allow（其他 subject 不影响目标产物） |
+| `demo/revocation/`（独立场景） | 密钥撤销 / 历史复核 / 可信时间证据 / 依赖产物链，见下节 |
 | （测试内构造） | 翻转签名首字节：签名维度独立失败；声明只有 sbom.json 而缺目标 subject：明确拒绝 |
+
+## 密钥撤销与历史影响复核
+
+发现某构建签名密钥泄露后，**不能**把数据库里所有历史“通过”批量改成“失败”。
+系统严格区分两个场景，并由独立的信任材料支撑：
+
+| 概念 | 说明 |
+|---|---|
+| 撤销事件 `internal/revocation` | 每个被撤销 KeyID 带 `compromisedAt`（有把握的泄露时间）与 `revokedAt`（正式撤销时间） |
+| 可信时间证据 `internal/timestampevidence` | 授权 **TSA**（公钥在信任根 `timestampAuthorities` 中）对“信封规范化摘要 + 时间”的 Ed25519 签名；先验 TSA 签名并绑定信封才采信 |
+| 自报时间 | provenance 的 `startedOn/finishedOn` 任何持钥者都能填写，**只留证、显式标注 `selfReportedTimeUntrusted=true`，不能当作可信历史证明** |
+| 依赖产物链 | 从 provenance `buildDefinition.resolvedDependencies`（名称+固定 sha256）提取并持久化；污染只沿“受信任固定依赖边”从上游传播到下游 |
+
+- **实时下载闸门**（`/v1/verify`，配置 `-revocation-feed` 后）：命中撤销密钥一律
+  `deny`（fail-closed），即使存在撤销前 TSA 时间证据也**不**用于放行下载。
+- **历史复核**（`/v1/review`）：只**新增** `review_kind='review'` 判定记录，
+  原始 gate 记录与 DSSE 信封永不被覆盖。三分类：
+  - `unaffected`：有 TSA 证据证明信封在 `compromisedAt` **之前**已存在，且依赖链无受影响上游；
+  - `insufficient`：没有任何可信时间证据（仅有自报时间不够），保留待复核；
+  - `affected`：最早可信时间不早于泄露点（**撤销后补盖的 TSA 戳不能洗白**），或固定依赖了受影响上游。
+- 复核只在“根产物 + 其固定上游链 + 传递引用它的下游”闭包内进行，不跨闭包下结论。
+
+确定性撤销场景在 `demo/revocation/revocation-scenario.json`，由 `genvectors` 生成，
+含 8 个产物的期望分类（root-good/unaffected、root-orphan/affected、
+root-insufficient/insufficient、三级 unaffected 下游、纯依赖传播 affected 下游、
+未撤销密钥的独立产物），并有测试覆盖“撤销后补入 TSA 证据 insufficient→affected、
+再补撤销前戳 → unaffected”的完整过程。
+
+### 离线核验包
+
+`internal/offline` 生成自包含目录：`policy.rego`、`trustroot.json`（含 TSA 公钥）、
+`revocation.json`、`attestations/`、`timestamps/` 与 `manifest.json`（每个文件的
+SHA-256 + 撤销信息更新截止 `revocationCutoff`）。消费端先校验包完整性再判定，
+输出恒为 `realTimeValid=false` 并带 `validityNotice`：**离线结论只对截止时点之前的
+撤销信息负责，不能声称实时有效**。包内策略/信任根/证据被篡改时拒绝。
 
 ## HTTP API
 
@@ -137,7 +173,13 @@ go run ./cmd/verifyctl -name payments-api-1.4.2.tar.gz \
 结论；顶层 `decision` 为汇总决策。查询历史证据：
 
 - `GET /v1/artifacts/attestations?name=...&sha256=...`
-- `GET /v1/artifacts/verifications?name=...&sha256=...`
+- `GET /v1/artifacts/verifications?name=...&sha256=...`（含 `reviewKind=gate|review`、`classification`）
+- `GET /v1/artifacts/dependencies?name=...&sha256=...`
+- `GET /v1/revocations`：当前撤销清单版本与 KeyID
+- `POST /v1/review`：`{"artifactName","artifactSha256"}` 触发历史影响复核（新增 review 记录）
+- `POST /v1/time-evidence`：`{"envelopeSha256","evidence"}` 补入 TSA 可信时间证据（先验签后入库）
+
+服务启动可选 `-revocation-feed demo/revocation/revocation-feed.json`。
 
 ## 演示安全边界说明
 

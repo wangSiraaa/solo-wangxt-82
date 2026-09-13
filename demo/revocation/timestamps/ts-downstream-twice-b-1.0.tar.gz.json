@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "type": "https://scbverify.example.com/timestamp-evidence/v1",
+  "envelopeSha256": "fd3c70549337b812780607d6b8b26f5f740505b657951ff758b2b239f6bbe6fc",
+  "timestamp": "2026-03-04T12:00:00Z",
+  "tsaKeyId": "1c677e1d2a0050c8338dedbf107ae82dcaea8c60b24b41602c2b33ec9d546605",
+  "signature": "1z+qjhsQlMlm27snr1PmAX3poRkl8OXbPW8+UT/Wjw7QrfFckaNJAkgov123HDkwpdq1lJGTg1vBQneuYhunAw=="
+}
